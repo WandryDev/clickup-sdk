@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/WandryDev/clickup.git"
+    "url": "git+https://github.com/WandryDev/clickup-sdk.git"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -36,10 +36,12 @@
     "lint": "biome check",
     "format": "biome format --write",
     "clickup:types": "tsx scripts/preprocess-clickup-openapi.ts && openapi-ts",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run build",
+    "release": "changeset publish"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.0",
+    "@changesets/cli": "^2.31.0",
     "@hey-api/client-fetch": "^0.13.1",
     "@hey-api/openapi-ts": "0.96.1",
     "@types/node": "^20",
