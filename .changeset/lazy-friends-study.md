@@ -1,5 +1,0 @@
----
-"@wandrydev/clickup": patch
----
-
-init
