@@ -5,6 +5,8 @@ export {
 } from "./client"
 export type {
   ClickUpComment,
+  ClickUpFolder,
+  ClickUpList,
   ClickUpSpace,
   ClickUpTask,
   ClickUpTimeEntry,
@@ -13,6 +15,7 @@ export type {
   TimeEstimateByUser,
 } from "./generated/v2/custom_types"
 export type {
+  GetListTasksParams,
   GetTeamTasksParams,
   GetTimeEntriesParams,
   MentionPart,
