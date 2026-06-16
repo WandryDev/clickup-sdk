@@ -23,6 +23,12 @@ describe("createClickUp", () => {
       "getTimeEntries",
       "getTaskTimeEntriesPerAssignee",
       "getList",
+      "getSpaces",
+      "getSpace",
+      "getFolders",
+      "getFolderlessLists",
+      "getFolderLists",
+      "getListTasks",
       "postComment",
       "postCommentWithMention",
     ] as const
@@ -70,6 +76,57 @@ describe("createClickUp", () => {
     ])
     expect(sentBody?.assignee).toBe(42)
     expect(sentBody?.notify_all).toBe(false)
+  })
+
+  it("getSpaces sends auth, hits the team space path, and returns members", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({
+        spaces: [{ id: "s1", name: "Space 1", members: [{ user: { id: 7 } }] }],
+      }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "secret-token" })
+    const spaces = await clickup.getSpaces("90210")
+
+    expect(spaces).toHaveLength(1)
+    expect(spaces[0].id).toBe("s1")
+    expect(spaces[0].members?.[0]?.user?.id).toBe(7)
+    const req = fetchMock.mock.calls[0][0]
+    expect(req.headers.get("Authorization")).toBe("secret-token")
+    expect(req.url).toContain("/v2/team/90210/space")
+  })
+
+  it("getListTasks forwards archived/page and unwraps tasks", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ tasks: [{ id: "t9" }], last_page: true }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const { tasks, last_page } = await clickup.getListTasks("123", {
+      archived: true,
+      page: 2,
+    })
+
+    expect(tasks).toEqual([{ id: "t9" }])
+    expect(last_page).toBe(true)
+    const req = fetchMock.mock.calls[0][0]
+    expect(req.url).toContain("/v2/list/123/task")
+    expect(req.url).toContain("archived=true")
+    expect(req.url).toContain("page=2")
+  })
+
+  it("getFolders throws (sync-critical) on a non-2xx response", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ err: "boom" }, 500),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.getFolders("s1")).rejects.toThrow(
+      /\/space\/s1\/folder failed/,
+    )
   })
 
   it("getList does not throw on a non-2xx response", async () => {

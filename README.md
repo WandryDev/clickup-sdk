@@ -59,6 +59,12 @@ const clickup = createClickUp({ token, logger })
 | `getTimeEntries(teamId, params)` | Time entries within a date range. |
 | `getTaskTimeEntriesPerAssignee(teamId, taskId, assigneeIds, range?)` | Per-assignee time entries; tolerates `TIMEENTRY_059`. |
 | `getList(listId)` | Fetch a list (non-throwing). |
+| `getSpaces(teamId)` | Spaces in a workspace, each with `members` (the user source for mirroring). |
+| `getSpace(spaceId)` | A single space (no `members` — use `getSpaces` for users). |
+| `getFolders(spaceId)` | Folders in a space, with nested `lists`. |
+| `getFolderlessLists(spaceId)` | Lists that live directly under a space. |
+| `getFolderLists(folderId)` | Lists inside a folder. |
+| `getListTasks(listId, params)` | List tasks; the only endpoint exposing `archived` tasks. |
 | `postComment(taskId, text)` | Plain comment. |
 | `postCommentWithMention(taskId, params)` | Comment with an `@`-mention. |
 

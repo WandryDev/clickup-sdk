@@ -1,17 +1,27 @@
 import type {
   GetFilteredTeamTasksData,
+  GetTasksData,
   GetTimeEntriesWithinDateRangeData,
 } from "./generated/v2"
 import {
   createTaskComment,
   getFilteredTeamTasks,
   getTimeEntriesWithinDateRange,
+  getFolderlessLists as sdkGetFolderlessLists,
+  getFolders as sdkGetFolders,
   getList as sdkGetList,
+  getLists as sdkGetLists,
+  getSpace as sdkGetSpace,
+  getSpaces as sdkGetSpaces,
   getTask as sdkGetTask,
+  getTasks as sdkGetTasks,
 } from "./generated/v2"
 import type { Client } from "./generated/v2/client"
 import type {
   ClickUpComment,
+  ClickUpFolder,
+  ClickUpList,
+  ClickUpSpace,
   ClickUpTask,
   ClickUpTimeEntry,
 } from "./generated/v2/custom_types"
@@ -37,8 +47,16 @@ export interface GetTeamTasksParams {
 export interface GetTimeEntriesParams {
   task_id?: string
   assignee?: string
+  space_id?: string
   start_date?: number
   end_date?: number
+}
+
+export interface GetListTasksParams {
+  archived?: boolean
+  include_closed?: boolean
+  subtasks?: boolean
+  page?: number
 }
 
 export type MentionPart =
@@ -148,6 +166,10 @@ export function createHelpers(ctx: ClickUpContext) {
     // string for multiple users — preserve that behaviour.
     if (params.assignee !== undefined)
       (query as Record<string, unknown>).assignee = params.assignee
+    // OpenAPI types `space_id` as number, but ClickUp space ids are opaque
+    // strings — pass through verbatim to filter time entries by space.
+    if (params.space_id !== undefined)
+      (query as Record<string, unknown>).space_id = params.space_id
     if (params.start_date !== undefined) query.start_date = params.start_date
     if (params.end_date !== undefined) query.end_date = params.end_date
 
@@ -226,6 +248,142 @@ export function createHelpers(ctx: ClickUpContext) {
     return data
   }
 
+  // GET /team/{team_id}/space — every space carries a `members` array, which is
+  // the source of users for the mirror. Throws on failure (sync depends on it).
+  async function getSpaces(teamId: string): Promise<ClickUpSpace[]> {
+    try {
+      const { data } = await sdkGetSpaces({
+        client,
+        path: { team_id: Number(teamId) },
+        throwOnError: true,
+      })
+      const spaces = (data.spaces ?? []) as ClickUpSpace[]
+      logger.info({ call: "getSpaces", teamId, count: spaces.length })
+      return spaces
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /team/${teamId}/space failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
+  // GET /space/{space_id} — a single space. Note: unlike GET /team/{id}/space,
+  // this response does NOT include `members`; consumers must source users from
+  // `getSpaces`. Throws on failure (sync depends on it).
+  async function getSpace(spaceId: string): Promise<ClickUpSpace> {
+    try {
+      const { data } = await sdkGetSpace({
+        client,
+        path: { space_id: Number(spaceId) },
+        throwOnError: true,
+      })
+      logger.info({ call: "getSpace", spaceId, name: data?.name })
+      return data as ClickUpSpace
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /space/${spaceId} failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
+  // GET /space/{space_id}/folder — folders with their nested `lists`. The
+  // OpenAPI spec mistypes `folders` as a single object whose `lists` is
+  // `string[]`; the API actually returns an array of folders each with nested
+  // List objects, so widen via `as unknown`. Throws on failure.
+  async function getFolders(spaceId: string): Promise<ClickUpFolder[]> {
+    try {
+      const { data } = await sdkGetFolders({
+        client,
+        path: { space_id: Number(spaceId) },
+        throwOnError: true,
+      })
+      const folders = (data.folders ?? []) as unknown as ClickUpFolder[]
+      logger.info({ call: "getFolders", spaceId, count: folders.length })
+      return folders
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /space/${spaceId}/folder failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
+  // GET /space/{space_id}/list — lists that live directly under a space (no
+  // folder). Throws on failure (sync depends on it).
+  async function getFolderlessLists(spaceId: string): Promise<ClickUpList[]> {
+    try {
+      const { data } = await sdkGetFolderlessLists({
+        client,
+        path: { space_id: Number(spaceId) },
+        throwOnError: true,
+      })
+      const lists = (data.lists ?? []) as ClickUpList[]
+      logger.info({ call: "getFolderlessLists", spaceId, count: lists.length })
+      return lists
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /space/${spaceId}/list failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
+  // GET /folder/{folder_id}/list — lists inside a folder. Useful when the
+  // nested `lists` from `getFolders` are incomplete. Throws on failure.
+  async function getFolderLists(folderId: string): Promise<ClickUpList[]> {
+    try {
+      const { data } = await sdkGetLists({
+        client,
+        path: { folder_id: Number(folderId) },
+        throwOnError: true,
+      })
+      const lists = (data.lists ?? []) as ClickUpList[]
+      logger.info({ call: "getFolderLists", folderId, count: lists.length })
+      return lists
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /folder/${folderId}/list failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
+  // GET /list/{list_id}/task — the only endpoint exposing `archived` tasks
+  // (GetFilteredTeamTasks has no `archived` param), so the mirror uses this to
+  // pull archived items. Throws on failure (sync depends on it).
+  async function getListTasks(
+    listId: string,
+    params: GetListTasksParams = {},
+  ): Promise<{ tasks: ClickUpTask[]; last_page?: boolean }> {
+    const query: NonNullable<GetTasksData["query"]> = {}
+    if (params.archived !== undefined) query.archived = params.archived
+    if (params.include_closed !== undefined)
+      query.include_closed = params.include_closed
+    if (params.subtasks !== undefined) query.subtasks = params.subtasks
+    if (params.page !== undefined) query.page = params.page
+
+    try {
+      const { data } = await sdkGetTasks({
+        client,
+        path: { list_id: Number(listId) },
+        query,
+        throwOnError: true,
+      })
+      // The list-task item type is structurally a task but a distinct generated
+      // type from the team-task items `ClickUpTask` builds on, so widen here.
+      const tasks = (data.tasks ?? []) as unknown as ClickUpTask[]
+      logger.info({
+        call: "getListTasks",
+        listId,
+        archived: params.archived ?? false,
+        page: params.page ?? 0,
+        count: tasks.length,
+      })
+      return { tasks, last_page: data.last_page }
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /list/${listId}/task failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
   async function postComment(
     taskId: string,
     commentText: string,
@@ -299,6 +457,12 @@ export function createHelpers(ctx: ClickUpContext) {
     getTimeEntries,
     getTaskTimeEntriesPerAssignee,
     getList,
+    getSpaces,
+    getSpace,
+    getFolders,
+    getFolderlessLists,
+    getFolderLists,
+    getListTasks,
     postComment,
     postCommentWithMention,
   }

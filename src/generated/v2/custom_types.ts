@@ -2,8 +2,11 @@
 // Preserved across codegen runs via `output.clean: false` in openapi-ts.config.ts.
 
 import type {
+  PathsV2SpaceSpaceIdFolderGetResponses200ContentApplicationJsonSchemaPropertiesFolders,
+  PathsV2SpaceSpaceIdListGetResponses200ContentApplicationJsonSchemaPropertiesListsItems,
   PathsV2TaskTaskIdCommentPostResponses200ContentApplicationJsonSchema,
   PathsV2TaskTaskIdGetResponses200ContentApplicationJsonSchema,
+  PathsV2TeamTeamIdSpaceGetResponses200ContentApplicationJsonSchemaPropertiesSpacesItems,
   PathsV2TeamTeamIdTaskGetResponses200ContentApplicationJsonSchemaPropertiesTasksItems,
   PathsV2TeamTeamIdTimeEntriesGetResponses200ContentApplicationJsonSchemaPropertiesDataItems,
   PathsV2TeamTeamIdWebhookPostResponses200ContentApplicationJsonSchema,
@@ -39,9 +42,26 @@ export type ClickUpComment =
 export type ClickUpWebhook =
   PathsV2TeamTeamIdWebhookPostResponses200ContentApplicationJsonSchema
 
-export type ClickUpSpace = {
-  id: string
-  name: string
+// GET /team/{team_id}/space returns each space WITH a `members` array — the
+// source of users for the mirror. GET /space/{space_id} returns the same shape
+// MINUS `members` (hence `members?` is optional). Previously a minimal
+// {id,name}; widened to the full generated shape so consumers can read members.
+export type ClickUpSpace =
+  PathsV2TeamTeamIdSpaceGetResponses200ContentApplicationJsonSchemaPropertiesSpacesItems
+
+// A list as returned by GET /space/{space_id}/list and GET /folder/{folder_id}/list.
+export type ClickUpList =
+  PathsV2SpaceSpaceIdListGetResponses200ContentApplicationJsonSchemaPropertiesListsItems
+
+// The OpenAPI spec types the `folder` payload as a single object whose `lists`
+// is `string[]`, but the real API returns an array of folders, each carrying an
+// array of nested List objects. Override `lists` with the proper List type; the
+// "object vs array" mismatch is widened at the call site in `getFolders`.
+export type ClickUpFolder = Omit<
+  PathsV2SpaceSpaceIdFolderGetResponses200ContentApplicationJsonSchemaPropertiesFolders,
+  "lists"
+> & {
+  lists: ClickUpList[]
 }
 
 // Тело, которое шлёт ClickUp Automation "Call webhook". Отличается от inbound

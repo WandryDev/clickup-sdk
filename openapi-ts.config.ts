@@ -5,7 +5,7 @@ export default defineConfig([
     input: {
       path: "./openapi/.generated/clickup-v2.json",
       include:
-        "^(GetTask|GetList|GetSpace|GetFilteredTeamTasks|Gettimeentrieswithinadaterange|CreateTaskComment|CreateWebhook)$",
+        "^(GetTask|GetTasks|GetList|GetLists|GetSpace|GetSpaces|GetFolders|GetFolderlessLists|GetFilteredTeamTasks|Gettimeentrieswithinadaterange|CreateTaskComment|CreateWebhook)$",
     },
     // clean: false preserves hand-written files (e.g. custom_types.ts) that
     // live alongside generated output. Generated files are still overwritten.
