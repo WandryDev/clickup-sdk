@@ -44,9 +44,12 @@ Run a single test: `bun run test src/client.test.ts` or filter by name with
      `PathsV2TeamTeamIdTaskGetResponses200ContentApplicationJsonSchemaPropertiesTasksItems`).
    - Strips colliding `title`s and drops `null` enum members.
 2. **`openapi-ts`** (`openapi-ts.config.ts`) reads `openapi/.generated/` and emits
-   `src/generated/{v2,v3}`. The v2 config uses an `include` regex to generate only
-   a small subset of operations (GetTask, GetList, GetSpace, GetFilteredTeamTasks,
-   GetTimeEntriesWithinDateRange, CreateTaskComment, CreateWebhook).
+   `src/generated/{v2,v3}`. Both specs are generated in full — the SDK surface is
+   wide, but only the operations wrapped in `src/helpers.ts` are public API.
+   Note: `input.include` is **not** a supported option in `@hey-api/openapi-ts`
+   0.96.x. It is accepted and silently ignored (the input type takes unknown
+   keys, so `tsc` won't flag it), so don't add a regex there expecting it to
+   scope generation.
 
 **`output.clean: false`** is intentional: it lets hand-written files live inside
 the generated tree and survive regeneration. The key one is
@@ -61,6 +64,7 @@ overwritten on every codegen run, so never edit them by hand.
   `ClickUpContext` to `createHelpers`. The returned object is `ClickUpClient`.
 - **`src/helpers.ts`** — all public methods (`getTask`, `getTeamTasks`,
   `findTaskInTeam`, `getTimeEntries`, `getTaskTimeEntriesPerAssignee`, `getList`,
+  `createTask`, `createTaskAttachment`,
   `postComment`, `postCommentWithMention`). Each closes over the `client` + `logger`
   from `ClickUpContext`. This is where the spec workarounds live and where new
   ergonomic methods should be added.
@@ -84,6 +88,16 @@ overwritten on every codegen run, so never edit them by hand.
 - `getTask`/`getTeamTasks`/`getTimeEntries`/`postComment*` use
   `throwOnError: true` and re-wrap failures as `Error`. `getList` is deliberately
   **non-throwing** (best-effort metadata). Keep that distinction.
+- `createTask`/`createTaskAttachment` also throw, but deliberately do **not** use
+  `throwOnError`: it throws the parsed response body alone, so the HTTP status is
+  lost and an empty error body arrives as `{}` — a 502 outage then looks the same
+  as a rejected request. They take the `{ data, error, response }` form and build
+  the message via `describeFailure`, which keeps the status. Prefer this for new
+  write methods.
+- `createTaskAttachment` is the only `multipart/form-data` method. It builds its
+  own `FormData` and passes it through with `bodySerializer: (body) => body`,
+  because the generated `formDataBodySerializer` appends without a filename —
+  every upload would land in ClickUp named `blob`.
 - `getTaskTimeEntriesPerAssignee` fans out one request per assignee and swallows
   per-user `TIMEENTRY_059` (access-denied) as empty, because a comma-joined
   `assignee` 403s the whole request if any single user is out of scope.

@@ -4,6 +4,7 @@
 import type {
   PathsV2SpaceSpaceIdFolderGetResponses200ContentApplicationJsonSchemaPropertiesFolders,
   PathsV2SpaceSpaceIdListGetResponses200ContentApplicationJsonSchemaPropertiesListsItems,
+  PathsV2TaskTaskIdAttachmentPostResponses200ContentApplicationJsonSchema,
   PathsV2TaskTaskIdCommentPostResponses200ContentApplicationJsonSchema,
   PathsV2TaskTaskIdGetResponses200ContentApplicationJsonSchema,
   PathsV2TeamTeamIdSpaceGetResponses200ContentApplicationJsonSchemaPropertiesSpacesItems,
@@ -41,6 +42,10 @@ export type ClickUpComment =
 
 export type ClickUpWebhook =
   PathsV2TeamTeamIdWebhookPostResponses200ContentApplicationJsonSchema
+
+// An attachment as returned by POST /task/{task_id}/attachment.
+export type ClickUpAttachment =
+  PathsV2TaskTaskIdAttachmentPostResponses200ContentApplicationJsonSchema
 
 // GET /team/{team_id}/space returns each space WITH a `members` array — the
 // source of users for the mirror. GET /space/{space_id} returns the same shape

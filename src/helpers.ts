@@ -1,4 +1,6 @@
 import type {
+  CreateTaskAttachmentData,
+  CreateTaskData,
   GetFilteredTeamTasksData,
   GetTasksData,
   GetTimeEntriesWithinDateRangeData,
@@ -7,6 +9,8 @@ import {
   createTaskComment,
   getFilteredTeamTasks,
   getTimeEntriesWithinDateRange,
+  createTask as sdkCreateTask,
+  createTaskAttachment as sdkCreateTaskAttachment,
   getFolderlessLists as sdkGetFolderlessLists,
   getFolders as sdkGetFolders,
   getList as sdkGetList,
@@ -18,6 +22,7 @@ import {
 } from "./generated/v2"
 import type { Client } from "./generated/v2/client"
 import type {
+  ClickUpAttachment,
   ClickUpComment,
   ClickUpFolder,
   ClickUpList,
@@ -59,6 +64,28 @@ export interface GetListTasksParams {
   page?: number
 }
 
+export interface CreateTaskParams {
+  name: string
+  description?: string
+  /**
+   * Markdown description. ClickUp names this `markdown_content` on create and
+   * prefers it over `description` when both are sent.
+   */
+  markdown_content?: string
+  /** Status name. Omit to let ClickUp apply the list's first status. */
+  status?: string
+  assignees?: number[]
+  /** Custom task type id. Omit for a standard "Task". */
+  custom_item_id?: number
+}
+
+export interface CreateTaskAttachmentParams {
+  /** File content. */
+  file: Blob
+  /** Name the attachment gets in ClickUp. */
+  filename: string
+}
+
 export type MentionPart =
   | { text: string }
   | {
@@ -69,6 +96,28 @@ export type MentionPart =
 
 const FIND_TASK_MAX_PAGES = 10
 const FIND_TASK_WINDOW_MS = 5_000
+
+// `throwOnError: true` throws the parsed response body alone, so the HTTP
+// status never reaches the caller — and an empty error body (a 502 from a
+// proxy) arrives as `{}`. The create methods use the non-throwing form and
+// build the message here instead, so an outage stays distinguishable from a
+// bad list id or an unknown status name.
+function describeFailure(
+  response: Response | undefined,
+  error: unknown,
+): string {
+  if (!response) {
+    const cause = error instanceof Error ? error.message : String(error)
+    return `no response: ${cause}`
+  }
+  const body =
+    error instanceof Error ? error.message : (JSON.stringify(error) ?? "")
+  // An empty error body reaches us as the literal "{}" (the generated client
+  // coerces it), which tells the caller nothing — report the status alone.
+  return !body || body === "{}"
+    ? `${response.status}`
+    : `${response.status}: ${body}`
+}
 
 export function createHelpers(ctx: ClickUpContext) {
   const { v2: client, logger } = ctx
@@ -384,6 +433,95 @@ export function createHelpers(ctx: ClickUpContext) {
     }
   }
 
+  // POST /list/{list_id}/task — optional fields are omitted from the body when
+  // not supplied so ClickUp applies its own defaults (notably: no `status`
+  // means the list's first status). Throws on failure.
+  async function createTask(
+    listId: string,
+    params: CreateTaskParams,
+  ): Promise<ClickUpTask> {
+    const body: CreateTaskData["body"] = { name: params.name }
+    if (params.description !== undefined) body.description = params.description
+    if (params.markdown_content !== undefined)
+      body.markdown_content = params.markdown_content
+    if (params.status !== undefined) body.status = params.status
+    if (params.assignees !== undefined) body.assignees = params.assignees
+    if (params.custom_item_id !== undefined)
+      body.custom_item_id = params.custom_item_id
+
+    const { data, error, response } = await sdkCreateTask({
+      client,
+      path: { list_id: Number(listId) },
+      body,
+    })
+    if (!response?.ok) {
+      throw new Error(
+        `ClickUp POST /list/${listId}/task failed with ${describeFailure(response, error)}`,
+      )
+    }
+    if (!data) {
+      throw new Error(
+        `ClickUp POST /list/${listId}/task returned ${response.status} with no task payload`,
+      )
+    }
+
+    // The create-task response schema and the team-task schema `ClickUpTask`
+    // builds on disagree, not just nominally: this one types `assignees` as
+    // `string[]` (vs assignee objects), `priority` as an object (vs number),
+    // `time_estimate` as `string | null` (vs number), and marks `id`/`url`
+    // optional. The team-task shape matches what ClickUp actually returns, so
+    // trust it over this section of the spec — the same call-site widening the
+    // other helpers use. Unverified against a live create call; if a consumer
+    // reports `assignees` arriving as ids, this is the line to revisit.
+    const task = data as unknown as ClickUpTask
+    logger.info({
+      call: "createTask",
+      listId,
+      taskId: task.id,
+      response: structuredClone(task),
+    })
+    return task
+  }
+
+  // POST /task/{task_id}/attachment — the only multipart endpoint here. The
+  // generated `formDataBodySerializer` appends without a filename, which would
+  // upload every file as "blob", so build the FormData explicitly and pass it
+  // through unserialized. Throws on failure.
+  async function createTaskAttachment(
+    taskId: string,
+    params: CreateTaskAttachmentParams,
+  ): Promise<ClickUpAttachment> {
+    const form = new FormData()
+    form.append("attachment", params.file, params.filename)
+
+    const { data, error, response } = await sdkCreateTaskAttachment({
+      client,
+      path: { task_id: taskId },
+      // The spec types the body as `{ attachment?: unknown[] }`; the API
+      // takes a single multipart file field, so widen to the built FormData.
+      body: form as unknown as CreateTaskAttachmentData["body"],
+      bodySerializer: (body) => body as FormData,
+    })
+    if (!response?.ok) {
+      throw new Error(
+        `ClickUp POST /task/${taskId}/attachment failed with ${describeFailure(response, error)}`,
+      )
+    }
+    if (!data) {
+      throw new Error(
+        `ClickUp POST /task/${taskId}/attachment returned ${response.status} with no attachment payload`,
+      )
+    }
+
+    logger.info({
+      call: "createTaskAttachment",
+      taskId,
+      filename: params.filename,
+      attachmentId: data.id,
+    })
+    return data
+  }
+
   async function postComment(
     taskId: string,
     commentText: string,
@@ -463,6 +601,8 @@ export function createHelpers(ctx: ClickUpContext) {
     getFolderlessLists,
     getFolderLists,
     getListTasks,
+    createTask,
+    createTaskAttachment,
     postComment,
     postCommentWithMention,
   }
