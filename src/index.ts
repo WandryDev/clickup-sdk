@@ -4,6 +4,7 @@ export {
   createClickUp,
 } from "./client"
 export type {
+  ClickUpAttachment,
   ClickUpComment,
   ClickUpFolder,
   ClickUpList,
@@ -15,6 +16,8 @@ export type {
   TimeEstimateByUser,
 } from "./generated/v2/custom_types"
 export type {
+  CreateTaskAttachmentParams,
+  CreateTaskParams,
   GetListTasksParams,
   GetTeamTasksParams,
   GetTimeEntriesParams,

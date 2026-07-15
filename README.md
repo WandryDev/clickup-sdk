@@ -65,8 +65,30 @@ const clickup = createClickUp({ token, logger })
 | `getFolderlessLists(spaceId)` | Lists that live directly under a space. |
 | `getFolderLists(folderId)` | Lists inside a folder. |
 | `getListTasks(listId, params)` | List tasks; the only endpoint exposing `archived` tasks. |
+| `createTask(listId, params)` | Create a task in a list. |
+| `createTaskAttachment(taskId, params)` | Upload a file onto a task. |
 | `postComment(taskId, text)` | Plain comment. |
 | `postCommentWithMention(taskId, params)` | Comment with an `@`-mention. |
+
+`createTask` requires `name`; `description`, `markdown_content`, `status`,
+`assignees` and `custom_item_id` are optional and are left out of the request
+when omitted, so ClickUp applies its own defaults (no `status` means the list's
+first status).
+
+```ts
+const task = await clickup.createTask("901100", {
+  name: "Crash on checkout",
+  markdown_content: "## Steps\n1. Open cart",
+  status: "to do",
+  assignees: [42],
+  custom_item_id: 1300,
+})
+
+await clickup.createTaskAttachment(task.id, {
+  file: new Blob([bytes], { type: "image/png" }),
+  filename: "screenshot.png",
+})
+```
 
 ## Development
 
