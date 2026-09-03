@@ -31,6 +31,7 @@ describe("createClickUp", () => {
       "getListTasks",
       "createTask",
       "createTaskAttachment",
+      "setTaskType",
       "postComment",
       "postCommentWithMention",
     ] as const
@@ -322,5 +323,106 @@ describe("createClickUp", () => {
     expect((error as Error).message).toContain("/task/t1/attachment")
     expect((error as Error).message).toContain("404")
     expect((error as Error).message).toContain("ATTCH_064")
+  })
+  it("setTaskType puts the task path with the auth token and returns the task", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ id: "t1", name: "Task", custom_item_id: 1002 }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "secret-token" })
+    const task = await clickup.setTaskType("t1", 1002)
+
+    expect(task.id).toBe("t1")
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const req = fetchMock.mock.calls[0][0]
+    expect(req.method).toBe("PUT")
+    expect(req.headers.get("Authorization")).toBe("secret-token")
+    expect(req.url).toContain("/v2/task/t1")
+  })
+
+  // The point of the narrow signature: a task type update must not carry any
+  // other field, or it would silently overwrite what someone edited in ClickUp.
+  it("setTaskType sends custom_item_id and nothing else", async () => {
+    let sentBody: Record<string, unknown> | undefined
+    const fetchMock = vi.fn(async (req: Request) => {
+      sentBody = (await req.clone().json()) as Record<string, unknown>
+      return jsonResponse({ id: "t1" })
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await clickup.setTaskType("t1", 1002)
+
+    expect(sentBody).toEqual({ custom_item_id: 1002 })
+  })
+
+  it("setTaskType throws with the status code and body on a non-2xx response", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ err: "Task not found", ECODE: "OAUTH_027" }, 404),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const error = await clickup.setTaskType("t1", 1002).catch((e: Error) => e)
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain("/task/t1")
+    expect((error as Error).message).toContain("404")
+    expect((error as Error).message).toContain("OAUTH_027")
+  })
+
+  // Callers throttle on 429, and matching a status code out of a message is
+  // brittle — carry it as a field so a rate limit stays machine-readable.
+  it("setTaskType carries the HTTP status on the thrown error", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ err: "Rate limit exceeded" }, 429),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const error = await clickup.setTaskType("t1", 1002).catch((e: Error) => e)
+
+    expect((error as Error & { status?: number }).status).toBe(429)
+    expect((error as Error).message).toContain("429")
+  })
+
+  it("setTaskType carries the status for a server error too", async () => {
+    const fetchMock = vi.fn(
+      async (_req: Request) => new Response("", { status: 500 }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const error = await clickup.setTaskType("t1", 1002).catch((e: Error) => e)
+
+    expect((error as Error & { status?: number }).status).toBe(500)
+    expect((error as Error).message).toBe(
+      "ClickUp PUT /task/t1 failed with 500",
+    )
+  })
+
+  it("setTaskType reports a 2xx with no payload distinctly from a failure", async () => {
+    const fetchMock = vi.fn(
+      async (_req: Request) => new Response("", { status: 200 }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.setTaskType("t1", 1002)).rejects.toThrow(
+      /\/task\/t1 returned 200 with no task payload/,
+    )
+  })
+
+  it("setTaskType surfaces the cause when the request never reaches ClickUp", async () => {
+    const fetchMock = vi.fn(async (_req: Request) => {
+      throw new TypeError("fetch failed: ECONNREFUSED")
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.setTaskType("t1", 1002)).rejects.toThrow(
+      /ECONNREFUSED/,
+    )
   })
 })
