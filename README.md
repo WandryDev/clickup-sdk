@@ -67,6 +67,7 @@ const clickup = createClickUp({ token, logger })
 | `getListTasks(listId, params)` | List tasks; the only endpoint exposing `archived` tasks. |
 | `createTask(listId, params)` | Create a task in a list. |
 | `createTaskAttachment(taskId, params)` | Upload a file onto a task. |
+| `setTaskType(taskId, customItemId)` | Change a task's custom task type; sends `custom_item_id` and nothing else. |
 | `postComment(taskId, text)` | Plain comment. |
 | `postCommentWithMention(taskId, params)` | Comment with an `@`-mention. |
 
@@ -88,6 +89,15 @@ await clickup.createTaskAttachment(task.id, {
   file: new Blob([bytes], { type: "image/png" }),
   filename: "screenshot.png",
 })
+```
+
+`setTaskType` sends a body of exactly `custom_item_id`, so ClickUp's patch
+semantics leave every other field of the task alone. Failures throw an `Error`
+carrying ClickUp's status both in the message and as `error.status`, so a `429`
+stays machine-readable for a caller that backs off.
+
+```ts
+await clickup.setTaskType(task.id, 1002)
 ```
 
 ## Development

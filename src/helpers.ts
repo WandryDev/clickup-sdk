@@ -19,6 +19,7 @@ import {
   getSpaces as sdkGetSpaces,
   getTask as sdkGetTask,
   getTasks as sdkGetTasks,
+  updateTask as sdkUpdateTask,
 } from "./generated/v2"
 import type { Client } from "./generated/v2/client"
 import type {
@@ -117,6 +118,16 @@ function describeFailure(
   return !body || body === "{}"
     ? `${response.status}`
     : `${response.status}: ${body}`
+}
+
+// Consumers throttle on 429 and give up on 4xx, and picking the code out of a
+// message with a regex is brittle — carry it as a field on the thrown error.
+function failureError(message: string, response: Response | undefined): Error {
+  const error = new Error(message)
+  if (response) {
+    Object.assign(error, { status: response.status })
+  }
+  return error
 }
 
 export function createHelpers(ctx: ClickUpContext) {
@@ -522,6 +533,41 @@ export function createHelpers(ctx: ClickUpContext) {
     return data
   }
 
+  // PUT /task/{task_id} carrying a body of exactly `custom_item_id`. ClickUp
+  // applies an update as a patch, so the single field leaves every other
+  // attribute untouched — the guarantee this narrow signature exists to make;
+  // a wider `updateTask` would move that guarantee into each call site. Throws
+  // on failure, with ClickUp's HTTP status attached to the error.
+  async function setTaskType(
+    taskId: string,
+    customItemId: number,
+  ): Promise<ClickUpTask> {
+    const { data, error, response } = await sdkUpdateTask({
+      client,
+      path: { task_id: taskId },
+      body: { custom_item_id: customItemId },
+    })
+    if (!response?.ok) {
+      throw failureError(
+        `ClickUp PUT /task/${taskId} failed with ${describeFailure(response, error)}`,
+        response,
+      )
+    }
+    if (!data) {
+      throw failureError(
+        `ClickUp PUT /task/${taskId} returned ${response.status} with no task payload`,
+        response,
+      )
+    }
+
+    // Same spec disagreement as `createTask`: the PUT response section types
+    // fields more loosely than what ClickUp returns, so trust the team-task
+    // shape the rest of the client is built on.
+    const task = data as unknown as ClickUpTask
+    logger.info({ call: "setTaskType", taskId, customItemId })
+    return task
+  }
+
   async function postComment(
     taskId: string,
     commentText: string,
@@ -603,6 +649,7 @@ export function createHelpers(ctx: ClickUpContext) {
     getListTasks,
     createTask,
     createTaskAttachment,
+    setTaskType,
     postComment,
     postCommentWithMention,
   }
