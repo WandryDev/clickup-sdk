@@ -2,12 +2,16 @@ import type {
   CreateTaskAttachmentData,
   CreateTaskData,
   GetFilteredTeamTasksData,
+  GetTaskCommentsData,
+  GetTaskData,
   GetTasksData,
   GetTimeEntriesWithinDateRangeData,
 } from "./generated/v2"
 import {
   createTaskComment,
+  getAuthorizedTeams,
   getFilteredTeamTasks,
+  getTask_sTimeinStatus,
   getTimeEntriesWithinDateRange,
   createTask as sdkCreateTask,
   createTaskAttachment as sdkCreateTaskAttachment,
@@ -15,10 +19,13 @@ import {
   getFolders as sdkGetFolders,
   getList as sdkGetList,
   getLists as sdkGetLists,
+  getRunningTimeEntry as sdkGetRunningTimeEntry,
   getSpace as sdkGetSpace,
   getSpaces as sdkGetSpaces,
   getTask as sdkGetTask,
+  getTaskComments as sdkGetTaskComments,
   getTasks as sdkGetTasks,
+  getThreadedComments as sdkGetThreadedComments,
   updateTask as sdkUpdateTask,
 } from "./generated/v2"
 import type { Client } from "./generated/v2/client"
@@ -27,9 +34,13 @@ import type {
   ClickUpComment,
   ClickUpFolder,
   ClickUpList,
+  ClickUpRunningTimeEntry,
   ClickUpSpace,
   ClickUpTask,
+  ClickUpTaskComment,
   ClickUpTimeEntry,
+  ClickUpTimeInStatus,
+  ClickUpWorkspace,
 } from "./generated/v2/custom_types"
 import type { ClickUpLogger } from "./logger"
 
@@ -48,6 +59,33 @@ export interface GetTeamTasksParams {
   include_closed?: boolean
   subtasks?: boolean
   page?: number
+}
+
+export interface GetTaskOptions {
+  /**
+   * Also return the description as Markdown in `markdown_description`.
+   * Without it ClickUp sends only the plain-text `description`/`text_content`.
+   */
+  include_markdown_description?: boolean
+}
+
+export interface GetTaskCommentsParams {
+  /**
+   * Pagination cursor: the `date` (Unix ms) of the oldest comment already
+   * fetched. ClickUp returns the 25 newest comments, then the 25 before
+   * `start`/`start_id`. Pass it together with `start_id`.
+   */
+  start?: number
+  /** Pagination cursor: the `id` of the oldest comment already fetched. */
+  start_id?: string
+}
+
+export interface GetRunningTimeEntryParams {
+  /**
+   * User whose timer to read. Defaults to the token's owner. Reading another
+   * user's timer requires a Workspace owner or admin token.
+   */
+  assignee?: number
 }
 
 export interface GetTimeEntriesParams {
@@ -133,11 +171,19 @@ function failureError(message: string, response: Response | undefined): Error {
 export function createHelpers(ctx: ClickUpContext) {
   const { v2: client, logger } = ctx
 
-  async function getTask(taskId: string): Promise<ClickUpTask> {
+  async function getTask(
+    taskId: string,
+    options: GetTaskOptions = {},
+  ): Promise<ClickUpTask> {
+    const query: NonNullable<GetTaskData["query"]> = {}
+    if (options.include_markdown_description !== undefined)
+      query.include_markdown_description = options.include_markdown_description
+
     try {
       const { data } = await sdkGetTask({
         client,
         path: { task_id: taskId },
+        query,
         throwOnError: true,
       })
       const task = data as ClickUpTask
@@ -568,6 +614,131 @@ export function createHelpers(ctx: ClickUpContext) {
     return task
   }
 
+  // GET /team — the workspaces the token can reach. The v2 API names them
+  // "teams"; each `id` is the `team_id` the team-scoped methods take. Throws.
+  async function getWorkspaces(): Promise<ClickUpWorkspace[]> {
+    try {
+      const { data } = await getAuthorizedTeams({ client, throwOnError: true })
+      const workspaces = (data.teams ?? []) as ClickUpWorkspace[]
+      logger.info({ call: "getWorkspaces", count: workspaces.length })
+      return workspaces
+    } catch (error) {
+      throw new Error(`ClickUp GET /team failed: ${JSON.stringify(error)}`)
+    }
+  }
+
+  // GET /task/{task_id}/comment — one page of comments, newest first. Page
+  // backwards with the oldest comment's `date`/`id` as `start`/`start_id`.
+  // Replies are not inlined: a comment with a non-zero `reply_count` has its
+  // thread behind `getThreadedComments`. Throws.
+  async function getTaskComments(
+    taskId: string,
+    params: GetTaskCommentsParams = {},
+  ): Promise<ClickUpTaskComment[]> {
+    const query: NonNullable<GetTaskCommentsData["query"]> = {}
+    if (params.start !== undefined) query.start = params.start
+    if (params.start_id !== undefined) query.start_id = params.start_id
+
+    try {
+      const { data } = await sdkGetTaskComments({
+        client,
+        path: { task_id: taskId },
+        query,
+        throwOnError: true,
+      })
+      const comments = (data.comments ?? []) as ClickUpTaskComment[]
+      logger.info({ call: "getTaskComments", taskId, count: comments.length })
+      return comments
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /task/${taskId}/comment failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
+  // GET /comment/{comment_id}/reply — the replies threaded under a comment
+  // (the parent itself is not included). Throws.
+  async function getThreadedComments(
+    commentId: string,
+  ): Promise<ClickUpTaskComment[]> {
+    try {
+      const { data } = await sdkGetThreadedComments({
+        client,
+        // OpenAPI types `comment_id` as number, but comments carry their id as
+        // a string — pass it through verbatim rather than round-trip a Number.
+        path: { comment_id: commentId as unknown as number },
+        throwOnError: true,
+      })
+      const replies = (data.comments ?? []) as ClickUpTaskComment[]
+      logger.info({
+        call: "getThreadedComments",
+        commentId,
+        count: replies.length,
+      })
+      return replies
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /comment/${commentId}/reply failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
+  // GET /task/{task_id}/time_in_status — how long the task has spent in each
+  // status. ClickUp refuses it unless a Workspace admin has enabled the
+  // "Total time in Status" ClickApp. Throws.
+  async function getTaskTimeInStatus(
+    taskId: string,
+  ): Promise<ClickUpTimeInStatus> {
+    try {
+      const { data } = await getTask_sTimeinStatus({
+        client,
+        path: { task_id: taskId },
+        headers: { "Content-Type": "application/json" },
+        throwOnError: true,
+      })
+      logger.info({
+        call: "getTaskTimeInStatus",
+        taskId,
+        status: data.current_status?.status,
+      })
+      return data
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /task/${taskId}/time_in_status failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
+  // GET /team/{team_id}/time_entries/current — the running timer, or `null`
+  // when none runs. The spec types `data` as always present and documents no
+  // idle response, so normalise a missing or null `data` to `null`. Throws.
+  async function getRunningTimeEntry(
+    teamId: string,
+    params: GetRunningTimeEntryParams = {},
+  ): Promise<ClickUpRunningTimeEntry | null> {
+    try {
+      const { data } = await sdkGetRunningTimeEntry({
+        client,
+        path: { team_id: Number(teamId) },
+        headers: { "Content-Type": "application/json" },
+        query:
+          params.assignee !== undefined ? { assignee: params.assignee } : {},
+        throwOnError: true,
+      })
+      const entry = (data?.data ?? null) as ClickUpRunningTimeEntry | null
+      logger.info({
+        call: "getRunningTimeEntry",
+        teamId,
+        taskId: entry?.task?.id ?? null,
+      })
+      return entry
+    } catch (error) {
+      throw new Error(
+        `ClickUp GET /team/${teamId}/time_entries/current failed: ${JSON.stringify(error)}`,
+      )
+    }
+  }
+
   async function postComment(
     taskId: string,
     commentText: string,
@@ -647,6 +818,11 @@ export function createHelpers(ctx: ClickUpContext) {
     getFolderlessLists,
     getFolderLists,
     getListTasks,
+    getWorkspaces,
+    getTaskComments,
+    getThreadedComments,
+    getTaskTimeInStatus,
+    getRunningTimeEntry,
     createTask,
     createTaskAttachment,
     setTaskType,

@@ -29,6 +29,11 @@ describe("createClickUp", () => {
       "getFolderlessLists",
       "getFolderLists",
       "getListTasks",
+      "getWorkspaces",
+      "getTaskComments",
+      "getThreadedComments",
+      "getTaskTimeInStatus",
+      "getRunningTimeEntry",
       "createTask",
       "createTaskAttachment",
       "setTaskType",
@@ -54,6 +59,218 @@ describe("createClickUp", () => {
     const req = fetchMock.mock.calls[0][0]
     expect(req.headers.get("Authorization")).toBe("secret-token")
     expect(req.url).toContain("/v2/task/t1")
+  })
+
+  it("getTask leaves the markdown description out unless asked", async () => {
+    const fetchMock = vi.fn(async (_req: Request) => jsonResponse({ id: "t1" }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await clickup.getTask("t1")
+
+    const url = new URL(fetchMock.mock.calls[0][0].url)
+    expect(url.pathname).toBe("/api/v2/task/t1")
+    expect(url.search).toBe("")
+  })
+
+  it("getTask requests the markdown description when asked", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ id: "t1", markdown_description: "## Steps" }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const task = await clickup.getTask("t1", {
+      include_markdown_description: true,
+    })
+
+    expect(task.markdown_description).toBe("## Steps")
+    const req = fetchMock.mock.calls[0][0]
+    expect(req.url).toContain("/v2/task/t1")
+    expect(req.url).toContain("include_markdown_description=true")
+  })
+
+  it("getWorkspaces sends auth to /team and unwraps teams", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ teams: [{ id: "90210", name: "Acme", members: [] }] }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "secret-token" })
+    const workspaces = await clickup.getWorkspaces()
+
+    expect(workspaces).toEqual([{ id: "90210", name: "Acme", members: [] }])
+    const req = fetchMock.mock.calls[0][0]
+    expect(req.headers.get("Authorization")).toBe("secret-token")
+    expect(new URL(req.url).pathname).toBe("/api/v2/team")
+  })
+
+  it("getWorkspaces returns an empty array when teams is absent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_req: Request) => jsonResponse({})),
+    )
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.getWorkspaces()).resolves.toEqual([])
+  })
+
+  it("getWorkspaces throws on a non-2xx response", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ err: "Token invalid" }, 401),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.getWorkspaces()).rejects.toThrow(
+      /GET \/team failed.*Token invalid/,
+    )
+  })
+
+  it("getTaskComments hits the task comment path and unwraps comments", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({
+        comments: [{ id: "c2", comment_text: "hi", date: "1700000000000" }],
+      }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const comments = await clickup.getTaskComments("t1")
+
+    expect(comments.map((c) => c.id)).toEqual(["c2"])
+    const req = fetchMock.mock.calls[0][0]
+    expect(req.url).toContain("/v2/task/t1/comment")
+    expect(req.url).not.toContain("start")
+  })
+
+  it("getTaskComments forwards the pagination cursor", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ comments: [] }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await clickup.getTaskComments("t1", {
+      start: 1700000000000,
+      start_id: "c2",
+    })
+
+    const url = new URL(fetchMock.mock.calls[0][0].url)
+    expect(url.searchParams.get("start")).toBe("1700000000000")
+    expect(url.searchParams.get("start_id")).toBe("c2")
+  })
+
+  it("getTaskComments throws on a non-2xx response", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ err: "boom" }, 500),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.getTaskComments("t1")).rejects.toThrow(
+      /\/task\/t1\/comment failed/,
+    )
+  })
+
+  it("getThreadedComments passes the comment id through verbatim", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ comments: [{ id: "r1", comment_text: "reply" }] }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const replies = await clickup.getThreadedComments("90120045678901")
+
+    expect(replies.map((r) => r.id)).toEqual(["r1"])
+    expect(fetchMock.mock.calls[0][0].url).toContain(
+      "/v2/comment/90120045678901/reply",
+    )
+  })
+
+  it("getThreadedComments throws on a non-2xx response", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ err: "boom" }, 404),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.getThreadedComments("c1")).rejects.toThrow(
+      /\/comment\/c1\/reply failed/,
+    )
+  })
+
+  it("getTaskTimeInStatus returns the current status and history", async () => {
+    const body = {
+      current_status: {
+        status: "in progress",
+        color: "#4194f6",
+        total_time: { by_minute: 42, since: "1700000000000" },
+      },
+      status_history: [],
+    }
+    const fetchMock = vi.fn(async (_req: Request) => jsonResponse(body))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const timeInStatus = await clickup.getTaskTimeInStatus("t1")
+
+    expect(timeInStatus).toEqual(body)
+    expect(fetchMock.mock.calls[0][0].url).toContain(
+      "/v2/task/t1/time_in_status",
+    )
+  })
+
+  it("getTaskTimeInStatus throws on a non-2xx response", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ err: "boom" }, 400),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.getTaskTimeInStatus("t1")).rejects.toThrow(
+      /\/task\/t1\/time_in_status failed.*boom/,
+    )
+  })
+
+  it("getRunningTimeEntry returns the running timer", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({
+        data: { id: "e1", task: { id: "t1", name: "Task" }, duration: -1 },
+      }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    const entry = await clickup.getRunningTimeEntry("90210", { assignee: 42 })
+
+    expect(entry?.task?.id).toBe("t1")
+    const url = new URL(fetchMock.mock.calls[0][0].url)
+    expect(url.pathname).toBe("/api/v2/team/90210/time_entries/current")
+    expect(url.searchParams.get("assignee")).toBe("42")
+  })
+
+  it("getRunningTimeEntry throws on a non-2xx response", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ err: "boom" }, 500),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.getRunningTimeEntry("90210")).rejects.toThrow(
+      /\/team\/90210\/time_entries\/current failed/,
+    )
+  })
+
+  it("getRunningTimeEntry returns null when no timer runs", async () => {
+    const fetchMock = vi.fn(async (_req: Request) =>
+      jsonResponse({ data: null }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const clickup = createClickUp({ token: "tok" })
+    await expect(clickup.getRunningTimeEntry("90210")).resolves.toBeNull()
+    expect(fetchMock.mock.calls[0][0].url).not.toContain("assignee")
   })
 
   it("postCommentWithMention builds a tag_user comment array", async () => {

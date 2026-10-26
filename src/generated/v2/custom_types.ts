@@ -5,8 +5,12 @@ import type {
   PathsV2SpaceSpaceIdFolderGetResponses200ContentApplicationJsonSchemaPropertiesFolders,
   PathsV2SpaceSpaceIdListGetResponses200ContentApplicationJsonSchemaPropertiesListsItems,
   PathsV2TaskTaskIdAttachmentPostResponses200ContentApplicationJsonSchema,
+  PathsV2TaskTaskIdCommentGetResponses200ContentApplicationJsonSchemaPropertiesCommentsItems,
   PathsV2TaskTaskIdCommentPostResponses200ContentApplicationJsonSchema,
   PathsV2TaskTaskIdGetResponses200ContentApplicationJsonSchema,
+  PathsV2TaskTaskIdTimeInStatusGetResponses200ContentApplicationJsonSchema,
+  PathsV2TeamGetResponses200ContentApplicationJsonSchemaPropertiesTeamsItems,
+  PathsV2TeamTeamIdTimeEntriesCurrentGetResponses200ContentApplicationJsonSchemaPropertiesData,
   PathsV2TeamTeamIdSpaceGetResponses200ContentApplicationJsonSchemaPropertiesSpacesItems,
   PathsV2TeamTeamIdTaskGetResponses200ContentApplicationJsonSchemaPropertiesTasksItems,
   PathsV2TeamTeamIdTimeEntriesGetResponses200ContentApplicationJsonSchemaPropertiesDataItems,
@@ -39,6 +43,33 @@ export type ClickUpTimeEntry =
 
 export type ClickUpComment =
   PathsV2TaskTaskIdCommentPostResponses200ContentApplicationJsonSchema
+
+// A workspace as returned by GET /team. The v2 API calls workspaces "teams";
+// `id` is the `team_id` every team-scoped endpoint takes.
+export type ClickUpWorkspace =
+  PathsV2TeamGetResponses200ContentApplicationJsonSchemaPropertiesTeamsItems
+
+// A comment as returned by GET /task/{task_id}/comment and
+// GET /comment/{comment_id}/reply. Distinct from `ClickUpComment`, which is the
+// thin `{ id, hist_id, date }` acknowledgement POST returns.
+export type ClickUpTaskComment =
+  PathsV2TaskTaskIdCommentGetResponses200ContentApplicationJsonSchemaPropertiesCommentsItems
+
+// GET /task/{task_id}/time_in_status — the current status plus every status
+// the task has passed through, each with its accumulated time.
+export type ClickUpTimeInStatus =
+  PathsV2TaskTaskIdTimeInStatusGetResponses200ContentApplicationJsonSchema
+
+// The timer GET /team/{team_id}/time_entries/current reports as running.
+// `duration` is negative while it runs; derive elapsed time from `start`
+// (`Date.now() - Number(start)`). The spec marks `task` as required, but
+// ClickUp allows timers that are not tied to a task, so it is optional here.
+export type ClickUpRunningTimeEntry = Omit<
+  PathsV2TeamTeamIdTimeEntriesCurrentGetResponses200ContentApplicationJsonSchemaPropertiesData,
+  "task"
+> & {
+  task?: PathsV2TeamTeamIdTimeEntriesCurrentGetResponses200ContentApplicationJsonSchemaPropertiesData["task"]
+}
 
 export type ClickUpWebhook =
   PathsV2TeamTeamIdWebhookPostResponses200ContentApplicationJsonSchema
