@@ -64,8 +64,9 @@ overwritten on every codegen run, so never edit them by hand.
   `ClickUpContext` to `createHelpers`. The returned object is `ClickUpClient`.
 - **`src/helpers.ts`** — all public methods (`getTask`, `getTeamTasks`,
   `findTaskInTeam`, `getTimeEntries`, `getTaskTimeEntriesPerAssignee`, `getList`,
-  `createTask`, `createTaskAttachment`,
-  `postComment`, `postCommentWithMention`). Each closes over the `client` + `logger`
+  `getWorkspaces`, `getTaskComments`, `getThreadedComments`,
+  `getTaskTimeInStatus`, `getRunningTimeEntry`, `createTask`,
+  `createTaskAttachment`, `postComment`, `postCommentWithMention`, …). Each closes over the `client` + `logger`
   from `ClickUpContext`. This is where the spec workarounds live and where new
   ergonomic methods should be added.
 - **`src/logger.ts`** — `ClickUpLogger` interface (`info`/`warn`) injected by the
@@ -85,8 +86,8 @@ overwritten on every codegen run, so never edit them by hand.
   ...`), with a comment explaining why — see `postCommentWithMention` (rich
   `comment` array vs documented `comment_text`) and `getTimeEntries` (comma-joined
   `assignee` string vs typed `number`). Prefer this over editing generated files.
-- `getTask`/`getTeamTasks`/`getTimeEntries`/`postComment*` use
-  `throwOnError: true` and re-wrap failures as `Error`. `getList` is deliberately
+- Every read helper except `getList`, plus `postComment*`, uses
+  `throwOnError: true` and re-wraps failures as `Error`. `getList` is deliberately
   **non-throwing** (best-effort metadata). Keep that distinction.
 - `createTask`/`createTaskAttachment` also throw, but deliberately do **not** use
   `throwOnError`: it throws the parsed response body alone, so the HTTP status is

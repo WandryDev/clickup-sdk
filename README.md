@@ -53,7 +53,8 @@ const clickup = createClickUp({ token, logger })
 
 | Method | Description |
 | --- | --- |
-| `getTask(taskId)` | Fetch a single task. |
+| `getWorkspaces()` | Workspaces the token can reach; each `id` is the `teamId` other methods take. |
+| `getTask(taskId, options?)` | Fetch a single task. `{ include_markdown_description: true }` adds `markdown_description`. |
 | `getTeamTasks(teamId, params)` | Filtered team tasks (paginated). |
 | `findTaskInTeam(teamId, task)` | Locate a task (with per-user estimates) across pages. |
 | `getTimeEntries(teamId, params)` | Time entries within a date range. |
@@ -65,6 +66,10 @@ const clickup = createClickUp({ token, logger })
 | `getFolderlessLists(spaceId)` | Lists that live directly under a space. |
 | `getFolderLists(folderId)` | Lists inside a folder. |
 | `getListTasks(listId, params)` | List tasks; the only endpoint exposing `archived` tasks. |
+| `getTaskComments(taskId, params?)` | Comments on a task, 25 per page, newest first. |
+| `getThreadedComments(commentId)` | Replies threaded under a comment. |
+| `getTaskTimeInStatus(taskId)` | Time spent in each status (needs the "Total time in Status" ClickApp). |
+| `getRunningTimeEntry(teamId, params?)` | The running timer, or `null` when none runs. |
 | `createTask(listId, params)` | Create a task in a list. |
 | `createTaskAttachment(taskId, params)` | Upload a file onto a task. |
 | `setTaskType(taskId, customItemId)` | Change a task's custom task type; sends `custom_item_id` and nothing else. |
@@ -89,6 +94,29 @@ await clickup.createTaskAttachment(task.id, {
   file: new Blob([bytes], { type: "image/png" }),
   filename: "screenshot.png",
 })
+```
+
+`getTaskComments` pages backwards: pass the oldest comment you already have as
+the cursor to get the 25 before it. Replies are not inlined; a comment with a
+non-zero `reply_count` has its thread behind `getThreadedComments`. ClickUp
+sends `reply_count` as a string, so compare `Number(comment.reply_count) > 0`
+rather than testing it for truthiness (`"0"` is truthy).
+
+```ts
+const [workspace] = await clickup.getWorkspaces()
+if (!workspace) throw new Error("The token reaches no workspace")
+const task = await clickup.getTask(taskId, { include_markdown_description: true })
+
+const page = await clickup.getTaskComments(taskId)
+const oldest = page.at(-1)
+const older = oldest
+  ? await clickup.getTaskComments(taskId, {
+      start: Number(oldest.date),
+      start_id: oldest.id,
+    })
+  : []
+
+const timer = await clickup.getRunningTimeEntry(workspace.id)
 ```
 
 `setTaskType` sends a body of exactly `custom_item_id`, so ClickUp's patch
