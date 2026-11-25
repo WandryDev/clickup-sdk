@@ -128,6 +128,69 @@ stays machine-readable for a caller that backs off.
 await clickup.setTaskType(task.id, 1002)
 ```
 
+## Testing
+
+`@wandrydev/clickup/testing` ships a fake ClickUp HTTP server for integration and
+e2e tests. It is **Node-only** (it uses `node:http`) and is a separate entry
+point, so it never ends up in the main bundle.
+
+It serves the routes behind `getTask`, `getTeamTasks`, `getTimeEntries`,
+`getList`, `getSpace`, `getFolders`, `getFolderlessLists`, `getListTasks` and
+`setTaskType`. Anything else answers 404 and is recorded as `unknown`.
+
+```ts
+import { createClickUp } from "@wandrydev/clickup"
+import {
+  createClickUpFake,
+  fakeFolder,
+  fakeList,
+  fakeSpace,
+  fakeTask,
+} from "@wandrydev/clickup/testing"
+
+const fake = await createClickUpFake({
+  spaces: [fakeSpace({ id: "101", name: "Dev" })],
+  folders: [fakeFolder({ id: "201", space: { id: "101" } })],
+  lists: [
+    fakeList({
+      id: "301",
+      folder: { id: "201", hidden: false },
+      space: { id: "101" },
+    }),
+  ],
+  tasks: [fakeTask({ id: "abc", list: { id: "301" }, folder: { id: "201" } })],
+})
+
+const clickup = createClickUp({ token: "test", baseUrl: fake.url })
+
+await clickup.setTaskType("abc", 1002)
+fake.calls("setTaskType") // [{ method, path, query, body: { custom_item_id: 1002 } }]
+
+fake.failOnce("getTask", { status: 429 }) // next getTask fails once
+await fake.reset({ tasks: [] }) // new fixtures, clears calls and failures
+await fake.close()
+```
+
+Notes:
+
+- The SDK turns space, folder, list and team ids into numbers, so use numeric
+  strings (`"101"`) for those ids in fixtures. Task ids can be anything.
+- A list without a `folder` override is folderless (`getFolderlessLists`).
+- `failOnce(helper, { status, taskId?, body? })` fails the next matching request
+  once; `taskId` restricts it to requests for that task.
+- Team tasks and list tasks paginate 100 per page, like ClickUp.
+
+To run it as a separate process (e.g. for browser e2e), start it from a script and
+point the app's ClickUp base URL at the printed address:
+
+```ts
+// fake-clickup.mjs
+import { createClickUpFake } from "@wandrydev/clickup/testing"
+
+const fake = await createClickUpFake({ /* fixtures */ })
+console.log(fake.url) // http://127.0.0.1:<port>/api
+```
+
 ## Development
 
 ```sh
